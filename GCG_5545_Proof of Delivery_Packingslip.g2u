@@ -1,0 +1,365 @@
+Program.Sub.Preflight.Start
+	v.Global.sUnsignedDir.Declare(string)
+	v.Global.sSignedDir.Declare(string)
+	v.Global.sErrorLogDir.Declare(string)
+	v.Global.sFromEmail.Declare(string)
+	v.Global.sSignedGSSDir.Declare(string)
+	v.Global.iDocCtrlGrp.Declare(long)
+	v.Global.sErrorLogContents.Declare(string)
+	v.Global.sInitFile.Declare(string)
+	v.global.sPackingList.Declare(string)
+	
+	v.Global.sPackingList.Set("")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+	f.Intrinsic.Control.Try
+		'load global variables from init file - call init sub. 
+		f.Intrinsic.Control.CallSub(Initialize)
+		
+		f.ODBC.Connection!con.opencompanyconnection
+		
+		'F.Intrinsic.Control.CallSub(PollForSignedPackingList)
+		f.Intrinsic.Control.SelectCase(v.Caller.Hook)
+			f.Intrinsic.Control.Case("28510")
+			'hook 28510 (Shipment New Populate)
+				'Uncheck the Print Packing List checkbox, so that it does not print twice
+				v.Passed.000008.Set("N")
+			f.Intrinsic.Control.Case("38424")
+				'hook 38423 (Staged Shipment Pre Ship)
+				
+				f.Intrinsic.String.LPad(v.Passed.000006,"0",7,v.Global.sPackingList)
+				F.Intrinsic.Control.CallSub(GeneratePackingList)
+			f.Intrinsic.Control.Case("28532")
+				'hook 28532 (Shipment New Post save)
+				f.Intrinsic.String.LPad(v.Passed.000168,"0",7,v.Global.sPackingList)				
+				'F.Intrinsic.Control.CallSub(SavePackingListToPDF)
+				F.Intrinsic.Control.CallSub(GeneratePackingList)
+			f.Intrinsic.Control.Case("25970")			
+				'hook 25970 (Shipment Open Pre Save)
+				f.Intrinsic.String.LPad(v.Passed.000003,"0",7,v.Global.sPackingList)
+				F.Intrinsic.Control.CallSub(GeneratePackingList)
+			f.Intrinsic.Control.Case("38120")
+				'hook 38120 (Pre Online Update)
+				F.Intrinsic.Control.CallSub(PollForSignedPackingList)
+		f.Intrinsic.Control.EndSelect		
+		f.ODBC.Connection!con.Close
+	f.Intrinsic.Control.Catch
+		F.Intrinsic.Control.CallSub(ErrorMsg)
+	f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Initialize.Start
+	f.Intrinsic.Control.Try
+		'Program uses init file living in \GLOBAL\CUSTOM\ARC#\0000.init.  User will manage program settings by specifying the UNSIGNED DIR, SIGNED DIR, FROM EMAIL, ERROR LOG DIR
+		'Note: Must first move the file from Global\Docs to the above location
+		v.Local.sFileContents.Declare(string)
+		v.local.sFilePath.Declare(string)
+		v.Local.iCount.Declare(long,0)
+		v.Local.sRowContents.Declare(string)
+		v.Local.bExists.Declare(boolean)
+		v.Local.sDocFilePath.Declare(string)
+		v.Local.sGCG5545Dir.Declare(string)
+		v.Local.sDocCtrlGrp.Declare(string)
+		v.Local.iRet.Declare(long)
+		
+		f.Intrinsic.String.Build("{0}\CUSTOM\GCG_5545",v.Caller.GlobalDir,V.Local.sGCG5545Dir)
+		f.Intrinsic.String.Build("{0}\GCG_5545_Init",v.local.sGCG5545Dir,V.Local.sFilePath)
+		'Move the file for first time use
+		f.Intrinsic.File.Exists(V.Local.sFilePath,v.Local.bExists)
+		f.Intrinsic.Control.If(v.Local.bExists,=,false)
+			f.Intrinsic.String.Build("{0}\GCG_5545_Init",v.Caller.DocDir,v.Local.sDocFilePath)
+			f.Intrinsic.File.DirExists(V.Local.sGCG5545Dir,v.Local.bExists)
+			f.Intrinsic.Control.If(v.Local.bExists,=,false)
+				f.Intrinsic.file.CreateDir(v.Local.sGCG5545Dir)
+			f.Intrinsic.Control.EndIf
+			f.Intrinsic.File.CopyOpenFile(v.Local.sDocFilePath,V.Local.sFilePath)
+			f.Intrinsic.File.MoveFile(v.Local.sDocFilePath,v.Local.sFilePath,v.Local.iRet)
+		f.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.FILE.FILETOSTRINGARRAY(V.Local.sFilePath,V.Ambient.NewLine,V.Local.sFileContents)
+		
+		v.Global.sUnsignedDir.Set(V.Local.sFileContents(0))
+		v.Global.sSignedDir.Set(V.Local.sFileContents(1))
+		v.Global.sSignedGSSDir.Set(V.Local.sFileContents(2))
+		v.Global.sErrorLogDir.Set(V.Local.sFileContents(3))
+		v.Global.sFromEmail.Set(V.Local.sFileContents(4))
+		v.local.sDocCtrlGrp.set(V.Local.sFileContents(5))
+		
+		f.Intrinsic.String.Replace(v.Global.sUnsignedDir.Trim,"UNSIGNED DROPBOX DIR:","",V.Global.sUnsignedDir)
+		f.Intrinsic.String.Replace(v.Global.sSignedDir.Trim,"SIGNED DROPBOX DIR:","",V.Global.sSignedDir)
+		f.Intrinsic.String.Replace(v.Global.sSignedGSSDir.Trim,"SIGNED GSS DIR:","",V.Global.sSignedGSSDir)
+		f.Intrinsic.String.Replace(v.Global.sErrorLogDir.Trim,"ERROR LOG DIR:","",V.Global.sErrorLogDir)
+		f.Intrinsic.String.Replace(v.Global.sFromEmail.Trim,"FROM EMAIL:","",V.Global.sFromEmail)
+		f.Intrinsic.String.Replace(v.Local.sDocCtrlGrp.Trim,"DOCUMENT CONTROL GROUP:","",v.Local.sDocCtrlGrp)
+		
+		f.Intrinsic.String.Replace(v.Global.sUnsignedDir,v.Ambient.Tab,"",V.Global.sUnsignedDir)
+		f.Intrinsic.String.Replace(v.Global.sSignedDir,v.Ambient.Tab,"",V.Global.sSignedDir)
+		f.Intrinsic.String.Replace(v.Global.sSignedGSSDir,v.Ambient.Tab,"",V.Global.sSignedGSSDir)
+		f.Intrinsic.String.Replace(v.Global.sErrorLogDir,v.Ambient.Tab,"",V.Global.sErrorLogDir)
+		f.Intrinsic.String.Replace(v.Global.sFromEmail,v.Ambient.Tab,"",V.Global.sFromEmail)
+		f.Intrinsic.String.Replace(v.Local.sDocCtrlGrp,v.Ambient.Tab,"",v.Local.sDocCtrlGrp)
+		
+		f.Intrinsic.Variable.SetNumeric(v.Local.sDocCtrlGrp,0,v.Global.iDocCtrlGrp)
+	f.Intrinsic.Control.Catch
+		f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+	f.Intrinsic.Control.EndTry
+Program.Sub.Initialize.End
+
+Program.Sub.WriteToErrorLog.Start
+	'Args:
+	'	1. Errortext
+	'	2. OrderNo
+	
+	'Append the sent error text to the global errorLog var
+	f.Intrinsic.Control.If(v.Global.sErrorLogContents,!=,"")
+		f.Intrinsic.String.Build("{0}{1}",v.Global.sErrorLogContents,v.Ambient.NewLine,v.Global.sErrorLogContents)
+	f.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.String.Build("{0}{1}{2}",v.Global.sErrorLogContents,v.Args.Errortext,v.Args.OrderNo,v.Global.sErrorLogContents)
+Program.Sub.WriteToErrorLog.End
+
+Program.Sub.ErrorMsg.Start
+v.Local.sError.Declare
+
+'Closes ODBC connection, default to connection : "con"
+f.Intrinsic.Control.If(v.ODBC!con.State, =, 1)
+	f.ODBC.Connection!con.Close
+f.Intrinsic.Control.EndIf
+
+'Generic Error message.
+f.Intrinsic.String.Build("Project GCG_5545_Proof of Delivery_Packingslip.g2u {0}{0}Subroutine: {1}{0}Error: {2} with Description: {3}", v.Ambient.NewLine, v.Args.CurrentSub, v.Ambient.ErrorNumber, v.Ambient.ErrorDescription, v.Local.sError)
+'f.Intrinsic.UI.Msgbox(v.Local.sError)
+
+f.Intrinsic.Control.CallSub(WriteToErrorLog,"ErrorText",v.Local.sError,"OrderNo","")
+F.Intrinsic.Control.CallSub(CreateErrorLogFile)
+Program.Sub.ErrorMsg.End
+
+Program.Sub.CreateErrorLogFile.Start
+F.Intrinsic.Control.Try
+	v.Local.sDate.Declare(string)
+	v.Local.sTime.Declare(string)
+	v.Local.sErrorLogFileName.Declare(string)
+		
+	f.Intrinsic.Control.If(v.Global.sErrorLogContents,!=,"")
+		f.Intrinsic.String.DateString(v.Ambient.Now,v.Local.sDate)
+		f.Intrinsic.String.TimeStringSec(v.Ambient.Now,v.Local.sTime)
+		f.Intrinsic.String.Build("{0}\{1}{2}{3}.txt",v.Global.sErrorLogDir,"GCG_5545_Proof Of Delivery_Packingslip_ErrorLog",v.Local.sDate,v.Local.sTime,v.Local.sErrorLogFileName)
+		f.Intrinsic.file.String2File(v.Local.sErrorLogFileName,v.Global.sErrorLogContents)
+		'reset the error log
+		v.Global.sErrorLogContents.Set("")
+	f.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndTry
+Program.Sub.CreateErrorLogFile.End
+
+Program.Sub.PollForSignedPackingList.Start
+	f.Intrinsic.Control.Try	
+		'ensure that hook is synchronous, if the volume of files and processing is holding up OLU, then might need to run async. 
+		'if running async then you will need to have a temp file to identify if program is running (store windows process id in text file and check if file exists and if pid is still ruinning - v.Ambient.PID )
+		v.Local.sCopyFromLoc.Declare(string)
+		v.Local.sCopyToLoc.Declare(string)
+		v.Local.sFileList.Declare(string)
+		v.Local.sFileFilter.Declare(string)
+		v.Local.iOrderCount.Declare(long,0)
+		v.Local.iFileCount.Declare(long,0)
+		v.Local.sSubject.Declare(string)
+		v.Local.sSender.Declare(string)
+		v.Local.sRecipients.Declare(string)
+		v.local.sFile.Declare(string)
+		v.Local.iLink.Declare
+		v.local.iRet.Declare(long)
+		v.Local.sExt.Declare(string)
+		v.Local.iUserID.Declare(long)
+		v.Local.sUnsignedFilePath.Declare(string)
+		v.Local.bExists.Declare(boolean)
+		
+		'Look in UNSIGNED directory (defined in program's init file) for any files ending in " (signed).pdf".  Dropbox allows the user to open the file, and after capturing the user's signature, it creates a copy of the file with the nomencalture {original name} (signed).pdf.
+		f.Intrinsic.String.Build("{0}\* (signed).pdf",v.Global.sUnsignedDir,v.Local.sFileFilter)
+		f.Intrinsic.File.GetFileList(v.Local.sFileFilter.trim,v.Local.sFileList)
+		f.Intrinsic.String.Split(v.Local.sFileList,":",v.Local.sFileList)
+		f.Intrinsic.Control.For(v.Local.iFileCount,0,v.Local.sFilelist.UBound,1)
+			'For each file found, use the PACKING LIST NO specified in the file name to look up the contact email from the sales order header.
+			'Grab CONTACT EMAIL and SO NUMBER
+			F.Intrinsic.Control.If(V.Local.sFileList(V.Local.iFileCount),!=,"")
+				f.Intrinsic.String.Replace(v.Local.sFilelist(v.Local.iFileCount)," (signed).pdf","",V.global.sPackingList)
+				f.Intrinsic.Control.CallSub(GetOrderDataFromPackingList)
+				'If no longer an open shipment then pull from order history	
+				f.Intrinsic.Control.If(v.DataTable.dtSOData.RowCount,<,1)
+					f.Intrinsic.Control.CallSub(GetOrderDataFromPackingList_History)
+				f.Intrinsic.Control.EndIf
+				
+				f.Intrinsic.Control.If(v.DataTable.dtSOData.RowCount,>,0)				
+					f.Intrinsic.Control.For(v.Local.iOrderCount,0,v.DataTable.dtSOData.RowCount--,1)
+						f.Intrinsic.Control.If(v.DataTable.dtSOData(v.Local.iOrderCount).Contact_email!FieldValTrim,=,"")
+							'If no email address found, write to error log.
+							f.Intrinsic.Control.CallSub(WriteToErrorLog,"ErrorText","No email address found for order ","OrderNo",v.DataTable.dtSOData(v.Local.iOrderCount).Order_No!FieldValTrim)
+						'f.Intrinsic.Control.Else
+						f.Intrinsic.Control.EndIf
+						'Email is okay to be sent, so copy the doc to the appointed GSS dir, attach the document to Doc Ctrl, then send the email with attachment
+						f.Intrinsic.String.Build("{0}\{1}",v.Global.sUnsignedDir,v.Local.sFilelist(v.Local.iFileCount),v.Local.sCopyFromLoc)
+						f.Intrinsic.String.Build("{0}\{1}",v.Global.sSignedGSSDir,v.Local.sFilelist(v.Local.iFileCount),v.Local.sCopyToLoc)
+						'check if file already exists and processed prior
+						f.Intrinsic.File.Exists(v.Local.sCopyToLoc,v.Local.bExists)
+						f.Intrinsic.Control.If(v.Local.bExists)
+							f.Intrinsic.File.DeleteFile(v.Local.sCopyFromLoc)							
+						f.Intrinsic.Control.Else
+							f.Intrinsic.File.MoveFile(v.Local.sCopyFromLoc,v.Local.sCopyToLoc,v.Local.iRet)
+						f.Intrinsic.Control.EndIf
+						
+						f.Intrinsic.Control.If(v.local.iRet,=,0)
+							f.Intrinsic.Control.CallSub(WriteToErrorLog,"ErrorText","Error moving file to GSS dir - order ","OrderNo",v.DataTable.dtSOData(v.Local.iOrderCount).Order_No!FieldValTrim)
+						f.Intrinsic.Control.Else
+							f.Global.DocumentControl.GetLinkID(v.DataTable.dtSOData(v.Local.iOrderCount).Order_No!FieldValTrim,45,v.Local.iLink)
+							f.Intrinsic.Control.If(v.Local.iLink,=,-1)
+								f.Global.DocumentControl.CreateReference(v.DataTable.dtSOData(v.Local.iOrderCount).Order_No!FieldValTrim,45,v.Local.iLink)		
+							f.Intrinsic.Control.EndIf	
+							f.Intrinsic.String.Right(v.Local.sFilelist(v.Local.iFileCount),3,v.Local.sExt)
+							F.Global.DocumentControl.AddDocument(V.Local.iLink,v.Local.sCopyToLoc,v.Local.sFilelist(v.Local.iFileCount),v.Global.iDocCtrlGrp,v.Local.sExt)
+						f.Intrinsic.Control.EndIf						
+							
+						'email the customer
+						f.Intrinsic.Control.If(v.DataTable.dtSOData(v.Local.iOrderCount).Contact_email!FieldValTrim,<>,"")
+							f.Global.Security.GetUserId(v.Caller.User,v.Caller.CompanyCode,v.Local.iUserID)
+							f.Intrinsic.String.Build("Receipt of Delivery for Order# {0}",v.DataTable.dtSOData(v.Local.iOrderCount).Order_No!FieldValTrim,v.Local.sSubject)
+							f.Intrinsic.String.Build("{0}*!*{1}",v.Global.sFromEmail,v.Global.sFromEmail,v.local.sSender)
+							V.Local.sRecipients.Set(v.DataTable.dtSOData(v.Local.iOrderCount).Contact_Email!FieldValTrim)
+							f.Intrinsic.String.Build("{0}\{1}",v.Global.sSignedGSSDir,v.Local.sFilelist(v.Local.iFileCount),v.Local.sFile)
+							F.Global.Messaging.CreateEMMessage(v.local.sRecipients,"",v.Global.sFromEmail,v.Global.sFromEmail,v.Local.sSubject,"",V.Local.sFile,False)
+						f.Intrinsic.Control.EndIf
+						
+						'f.Data.DataTable.Close("dtSOData")
+					f.Intrinsic.Control.Next(v.Local.iOrderCount)
+				f.Intrinsic.Control.Else
+					f.Intrinsic.Control.CallSub(WriteToErrorLog,"ErrorText","No sales orders found for PackingListNo ","OrderNo",V.global.sPackingList)
+				f.Intrinsic.Control.EndIf
+				
+				'Delete the original file, if it exists
+				f.Intrinsic.String.Build("{0}\{1}.pdf",v.Global.sUnsignedDir,v.Global.sPackingList,v.Local.sUnsignedFilePath)
+				f.Intrinsic.File.Exists(v.Local.sUnsignedFilePath,v.Local.bExists)
+				f.Intrinsic.Control.If(v.Local.bExists)
+					f.Intrinsic.File.DeleteFile(v.Local.sUnsignedFilePath)
+				f.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.EndIf
+			
+		f.Intrinsic.Control.Next(v.Local.iFileCount)
+		 
+		'Any errors encountered with either should be written to the error log and output the error log dir.
+		F.Intrinsic.Control.CallSub(CreateErrorLogFile)
+	f.Intrinsic.Control.Catch
+		f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+	f.Intrinsic.Control.EndTry
+Program.Sub.PollForSignedPackingList.End
+
+Program.Sub.GetOrderDataFromPackingList.Start
+	f.Intrinsic.Control.Try
+		v.Local.sSQL.Declare(string)
+		
+	F.Intrinsic.Control.If(V.DataTable.dtSOData.Exists)
+		F.Data.DataTable.Close("dtSOData")
+	F.Intrinsic.Control.EndIf
+
+		f.Intrinsic.String.Build("select v_shipment_billto.order_no, case v_shipment_billto.contact when '' then v_shipment_billto.contact_email else v_shipment_billto.contact end as Contact, v_shipment_billto.contact_email, v_shipment_header.order_suffix from v_shipment_billto join v_shipment_header on 	v_shipment_billto.order_no=v_shipment_header.order_no where v_shipment_header.pck_no='{0}'",V.global.sPackingList,V.Local.sSQL)
+		F.Data.DataTable.CreateFromSQL("dtSOData","con",v.local.sSQL,True)
+	f.Intrinsic.Control.Catch
+		f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+	f.Intrinsic.Control.EndTry
+Program.Sub.GetOrderDataFromPackingList.End
+
+Program.Sub.GeneratePackingList.Start
+
+	f.Intrinsic.Control.Try
+		'If called from hook 38423 (Staged Shipment Pre Save), callwrapper 910070 to generate the packing list data.  
+		
+		v.Local.sParams.Declare(string)
+		V.Local.sSql.Declare(string)
+		
+		'Gen the PL
+		f.Intrinsic.Control.CallSub(GetOrderDataFromPackingList)
+		
+		'Wait 3 seconds, then check BI table to see if getting launched
+		f.Intrinsic.UI.Sleep(3)
+		F.Intrinsic.String.build("select top 1 * from BI_PACKING_LIST where pck_no='{0}'",v.Global.sPackingList,V.Local.sSql)
+		Function.ODBC.Connection!con.OpenLocalRecordsetRO("rstPackNo",V.Local.sSql)
+		F.Intrinsic.Control.if(V.ODBC.con!rstPackNo.EOF,=,True)
+			f.Intrinsic.Control.if(v.DataTable.dtSOData.RowCount,>,0)
+				f.Intrinsic.string.Build("{0}!*!{1}!*!{2}!*!N!*!Y!*!N!*!Y!*!!*!!*!!*!|~|CRYSTAL-OVERRIDE|~|","",v.DataTable.dtSOData(0).Order_no!fieldvaltrim,v.DataTable.dtSOData(0).Order_suffix!fieldvaltrim,v.local.sParams)
+				F.Global.General.CallWrapperSyncBIO(910070,v.local.sParams)
+			f.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.EndIf
+		F.ODBC.con!rstPackNo.Close
+		
+		'Once PL is gen'd, save the packing list
+		F.Intrinsic.Control.CallSub(SavePackingListToPDF)
+	f.Intrinsic.Control.Catch
+		f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+	f.Intrinsic.Control.EndTry
+Program.Sub.GeneratePackingList.End
+
+Program.Sub.SavePackingListToPDF.Start
+	f.Intrinsic.Control.Try
+		'NOTE: This script is formatted to work with the standard packing list reports in Global Shop).  If using a custom packing list, please verify the parameter list before running if using a different report ID!
+		v.Local.sBIRptID.Declare(string)
+		v.local.sSQL.Declare(string)
+		v.Local.iBIRunID.Declare(long)
+		V.Local.sParams.Declare
+		V.Local.sValues.Declare
+		v.Local.sFileName.Declare(string)
+		v.local.bExists.Declare(boolean)
+		v.Local.sLogo.Declare(string)
+		
+		
+		f.Intrinsic.Control.If(v.DataTable.dtSOData.Exists,=,False)
+			f.Intrinsic.Control.CallSub(GetOrderDataFromPackingList)
+		f.Intrinsic.Control.EndIf
+
+		
+		'Check BI table for presence of 
+		'Get the GS BI Report ID
+		F.Intrinsic.String.build("select top 1 * from BI_PACKING_LIST where ORDER_NO='{0}'",v.DataTable.dtSOData(0).Order_no!fieldvaltrim,V.Local.sSql)
+		Function.ODBC.Connection!con.OpenLocalRecordsetRO("rstPackID",V.Local.sSql)
+		F.Intrinsic.Control.if(V.ODBC.con!rstPackID.EOF,=,False)
+			V.Local.sBIRptID.Set(V.ODBC.con!rstPackID.FieldVal!RPTID)
+		F.Intrinsic.Control.Else
+			f.Intrinsic.Control.CallSub(WriteToErrorLog,"ErrorText","Report ID Can not be found - ","OrderNo",v.DataTable.dtSOData(0).Order_no!fieldvaltrim)
+			F.Intrinsic.Control.ExitSub
+		F.Intrinsic.Control.EndIf
+		F.ODBC.con!rstPackID.Close
+		
+		'Build the file name
+		f.Intrinsic.String.Build("{0}\{1}.pdf",v.Global.sUnsignedDir,v.Global.sPackingList,v.Local.sFileName)
+		
+		f.Intrinsic.File.Exists(v.Local.sFileName,v.Local.bExists)
+		f.Intrinsic.Control.If(v.Local.bExists,=,True)
+			'Prompt user 
+		f.Intrinsic.Control.EndIf
+		
+		'Build parameters and values, then pass to the report to save
+		F.Intrinsic.String.Split("Terminal*!*REPORTID*!*PCKNO","*!*",V.Local.sParams)
+		'f.Global.BI.GetReportSequenceLogo(v.Local.sBIRptID,1,v.Caller.CompanyCode,v.Local.sLogo)
+		f.Intrinsic.String.Build("{0}*!*{1}*!*{2}",V.Caller.Terminal,V.Local.sBIRptID,v.Global.sPackingList,V.Local.sValues)
+		F.Intrinsic.String.Split(V.Local.sValues,"*!*",V.Local.sValues)
+		f.Global.BI.SaveReport(v.Local.sBIRptID,0,V.Local.sParams,V.Local.sValues,v.Local.sFileName)
+	f.Intrinsic.Control.Catch
+		f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+	f.Intrinsic.Control.EndTry
+Program.Sub.SavePackingListToPDF.End
+
+Program.Sub.GetOrderDataFromPackingList_History.Start
+	f.Intrinsic.Control.Try
+		v.Local.sSQL.Declare(string)
+		
+	F.Intrinsic.Control.If(V.DataTable.dtSOData.Exists)
+		F.Data.DataTable.Close("dtSOData")
+	F.Intrinsic.Control.EndIf
+
+		f.Intrinsic.String.Build("select v_ORDER_HIST_HEAD.order_no, v_ORDER_HIST_HEAD.contact, v_ORDER_HIST_HEAD.contact_email, v_ORDER_HIST_HEAD.order_suffix from v_ORDER_HIST_HEAD where v_ORDER_HIST_HEAD.pck_no='{0}'",V.global.sPackingList,V.Local.sSQL)
+		F.Data.DataTable.CreateFromSQL("dtSOData","con",v.local.sSQL,True)
+	f.Intrinsic.Control.Catch
+		f.Intrinsic.Control.CallSub(ErrorMsg, CurrentSub, v.Ambient.CurrentSubroutine)
+	f.Intrinsic.Control.EndTry
+Program.Sub.GetOrderDataFromPackingList_History.End
+
+Program.Sub.Comments.Start
+${$5$}$2.0.0.0$}$2
+${$6$}$bstevens$}$20210224201056502$}$3Pg7+K2MGztoXyjxMVZqWaM5g3GOUsSNnmNx+U9dKibgU/ILbt7BQ8uhnxP/jkjQ72gbEsXbf0R4HF1MKgxASA==
+Program.Sub.Comments.End
